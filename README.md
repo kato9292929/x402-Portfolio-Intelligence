@@ -15,8 +15,9 @@ wallet address and the app scores its risk, liquidity, and smart money
 divergence, then Claude generates a "what to do next" recommendation.
 
 Every analysis endpoint is metered with the [x402](https://x402.org) payment
-protocol — the client pays a small USDC amount on Base before results are
-returned.
+protocol — the client pays a small amount before results are returned.
+Payment can be made on Base / Polygon (USDC / JPYC), Solana (USDC), or
+BNB Chain (USDT).
 
 ### Features
 
@@ -135,7 +136,8 @@ x402 Portfolio Intelligence は、任意のウォレットのDeFiポートフォ
 「今のポートフォリオをどう動かすべきか」を提案します。
 
 すべての分析エンドポイントは [x402](https://x402.org) 決済プロトコルで従量課金
-されており、結果を返す前にBase上のUSDCで少額を支払います。
+されており、結果を返す前に少額の決済を行います。決済は Base・Polygon
+（USDC / JPYC）、Solana（USDC）、BNB Chain（USDT）から選択できます。
 
 ### 主な機能
 
