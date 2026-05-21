@@ -1,7 +1,9 @@
 "use client";
 
+import { useWallet } from "@solana/wallet-adapter-react";
 import { useState } from "react";
 import { useWalletClient } from "wagmi";
+import { paymentEndpoint, type PaymentChain, type PaymentToken } from "@/lib/payments";
 import type { HistoryAnalysis, PortfolioAnalysis, SimulationResult } from "@/lib/types";
 import { PaymentError, x402Fetch } from "@/lib/x402Client";
 import { PortfolioPieChart } from "./PortfolioPieChart";
@@ -19,8 +21,17 @@ function errorMessage(err: unknown): string {
   return "予期しないエラーが発生しました";
 }
 
-export function ResultView({ analysis }: { analysis: PortfolioAnalysis }) {
+export function ResultView({
+  analysis,
+  chain,
+  token,
+}: {
+  analysis: PortfolioAnalysis;
+  chain: PaymentChain;
+  token: PaymentToken;
+}) {
   const { data: walletClient } = useWalletClient();
+  const solana = useWallet();
   const { portfolio, analysis: a } = analysis;
 
   const [history, setHistory] = useState<HistoryAnalysis | null>(null);
@@ -33,13 +44,13 @@ export function ResultView({ analysis }: { analysis: PortfolioAnalysis }) {
     setError(null);
     try {
       const res = await x402Fetch(
-        "/api/portfolio/history",
+        paymentEndpoint("history", chain, token),
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ walletAddress: analysis.walletAddress }),
         },
-        walletClient,
+        { evm: walletClient, solana },
       );
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? "履歴分析に失敗しました");
@@ -56,7 +67,7 @@ export function ResultView({ analysis }: { analysis: PortfolioAnalysis }) {
     setError(null);
     try {
       const res = await x402Fetch(
-        "/api/portfolio/simulate",
+        paymentEndpoint("simulate", chain, token),
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -65,7 +76,7 @@ export function ResultView({ analysis }: { analysis: PortfolioAnalysis }) {
             proposedChanges: { recommendations: a.recommendations },
           }),
         },
-        walletClient,
+        { evm: walletClient, solana },
       );
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? "シミュレーションに失敗しました");
@@ -79,7 +90,6 @@ export function ResultView({ analysis }: { analysis: PortfolioAnalysis }) {
 
   return (
     <div className="results fade-in">
-      {/* summary */}
       <div className="panel">
         <div className="summary-head">
           <div>
@@ -103,7 +113,6 @@ export function ResultView({ analysis }: { analysis: PortfolioAnalysis }) {
         </p>
       </div>
 
-      {/* pie + gauges */}
       <div className="grid-2-even">
         <div className="panel">
           <div className="section-title">ポートフォリオ構成</div>
@@ -122,31 +131,24 @@ export function ResultView({ analysis }: { analysis: PortfolioAnalysis }) {
         </div>
       </div>
 
-      {/* recommendations */}
       <div className="panel">
         <div className="section-title">リバランス推奨アクション</div>
         <RecommendationList recommendations={a.recommendations} />
       </div>
 
-      {/* extended analysis actions */}
       <div className="panel">
         <div className="section-title">追加分析</div>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <button
-            className="btn-ghost"
-            onClick={runHistory}
-            disabled={busy !== null}
-          >
+          <button className="btn-ghost" onClick={runHistory} disabled={busy !== null}>
             {busy === "history" ? "分析中…" : "90日履歴を分析（$0.30）"}
           </button>
-          <button
-            className="btn-ghost"
-            onClick={runSimulation}
-            disabled={busy !== null}
-          >
+          <button className="btn-ghost" onClick={runSimulation} disabled={busy !== null}>
             {busy === "simulate" ? "計算中…" : "リバランスをシミュレート（$0.50）"}
           </button>
         </div>
+        <p className="muted" style={{ marginTop: 10, fontSize: 12 }}>
+          追加分析も {chain.toUpperCase()} / {token} で決済されます
+        </p>
         {error && <div className="error-box">{error}</div>}
       </div>
 

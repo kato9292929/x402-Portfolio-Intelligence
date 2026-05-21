@@ -1,17 +1,23 @@
 "use client";
 
+import { useWallet } from "@solana/wallet-adapter-react";
 import { useEffect, useState } from "react";
 import { useAccount, useWalletClient } from "wagmi";
 import { Header } from "@/components/Header";
 import { ResultView } from "@/components/ResultView";
-import type { Chain, PortfolioAnalysis, RiskTolerance } from "@/lib/types";
+import {
+  CHAIN_BANNER,
+  CHAIN_TOKENS,
+  PAYMENT_CHAINS,
+  analyzedChainFor,
+  defaultToken,
+  isSolanaChain,
+  paymentEndpoint,
+  type PaymentChain,
+  type PaymentToken,
+} from "@/lib/payments";
+import type { PortfolioAnalysis, RiskTolerance } from "@/lib/types";
 import { PaymentError, x402Fetch } from "@/lib/x402Client";
-
-const CHAINS: { id: Chain; label: string }[] = [
-  { id: "solana", label: "Solana" },
-  { id: "base", label: "Base" },
-  { id: "polygon", label: "Polygon" },
-];
 
 const RISK_LEVELS: RiskTolerance[] = ["LOW", "MEDIUM", "HIGH"];
 
@@ -24,10 +30,12 @@ const PRICING = [
 export default function Home() {
   const { address, isConnected } = useAccount();
   const { data: walletClient } = useWalletClient();
+  const solana = useWallet();
 
   const [walletAddress, setWalletAddress] = useState("");
   const [touched, setTouched] = useState(false);
-  const [chain, setChain] = useState<Chain>("base");
+  const [chain, setChain] = useState<PaymentChain>("solana");
+  const [token, setToken] = useState<PaymentToken>("USDC");
   const [riskTolerance, setRiskTolerance] = useState<RiskTolerance>("MEDIUM");
 
   const [loading, setLoading] = useState(false);
@@ -36,8 +44,18 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!touched && address) setWalletAddress(address);
-  }, [address, touched]);
+    if (touched) return;
+    if (chain === "solana" && solana.publicKey) {
+      setWalletAddress(solana.publicKey.toBase58());
+    } else if (chain !== "solana" && address) {
+      setWalletAddress(address);
+    }
+  }, [address, solana.publicKey, chain, touched]);
+
+  function selectChain(next: PaymentChain) {
+    setChain(next);
+    setToken(defaultToken(next));
+  }
 
   async function analyze() {
     if (!walletAddress.trim()) {
@@ -51,27 +69,33 @@ export default function Home() {
 
     try {
       const res = await x402Fetch(
-        "/api/portfolio/analyze",
+        paymentEndpoint("analyze", chain, token),
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ walletAddress: walletAddress.trim(), chain, riskTolerance }),
+          body: JSON.stringify({
+            walletAddress: walletAddress.trim(),
+            chain: analyzedChainFor(chain),
+            riskTolerance,
+          }),
         },
-        walletClient,
+        { evm: walletClient, solana },
         { onPayment: () => setStage("ポートフォリオをAIが分析中…") },
       );
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? "分析に失敗しました");
       setResult(data as PortfolioAnalysis);
     } catch (err) {
-      if (err instanceof PaymentError) setError(err.message);
-      else if (err instanceof Error) setError(err.message);
+      if (err instanceof PaymentError || err instanceof Error) setError(err.message);
       else setError("予期しないエラーが発生しました");
     } finally {
       setLoading(false);
       setStage("");
     }
   }
+
+  const banner = CHAIN_BANNER[chain];
+  const walletReady = isSolanaChain(chain) ? solana.connected : isConnected;
 
   return (
     <>
@@ -110,19 +134,39 @@ export default function Home() {
           </div>
 
           <div className="field">
-            <label>チェーン</label>
+            <label>決済ネットワーク</label>
             <div className="choice-row">
-              {CHAINS.map((c) => (
+              {PAYMENT_CHAINS.map((c) => (
                 <button
                   key={c.id}
                   type="button"
                   className={`choice ${chain === c.id ? "active" : ""}`}
-                  onClick={() => setChain(c.id)}
+                  onClick={() => selectChain(c.id)}
                 >
                   {c.label}
                 </button>
               ))}
             </div>
+          </div>
+
+          <div className="field">
+            <label>決済トークン</label>
+            <div className="token-tabs">
+              {CHAIN_TOKENS[chain].map((opt) => (
+                <button
+                  key={opt.token}
+                  type="button"
+                  disabled={!opt.enabled}
+                  className={`token-tab ${token === opt.token && opt.enabled ? "active" : ""} ${
+                    opt.enabled ? "" : "disabled"
+                  }`}
+                  onClick={() => opt.enabled && setToken(opt.token)}
+                >
+                  {opt.token}
+                </button>
+              ))}
+            </div>
+            {banner && <div className="banner">{banner}</div>}
           </div>
 
           <div className="field">
@@ -142,13 +186,15 @@ export default function Home() {
           </div>
 
           <button className="btn-primary" onClick={analyze} disabled={loading}>
-            {loading ? "処理中…" : "分析する（$0.50）"}
+            {loading ? "処理中…" : `分析する（${token}決済）`}
           </button>
 
           <p className="form-note">
-            {isConnected
-              ? "x402決済（Base USDC）後に分析結果が表示されます"
-              : "分析にはウォレット接続が必要です。右上から接続してください"}
+            {walletReady
+              ? "x402決済の承認後に分析結果が表示されます"
+              : isSolanaChain(chain)
+                ? "Solanaウォレットを接続してください（右上）"
+                : "EVMウォレットを接続してください（右上）"}
           </p>
 
           {error && <div className="error-box">{error}</div>}
@@ -161,7 +207,7 @@ export default function Home() {
           </div>
         )}
 
-        {result && <ResultView analysis={result} />}
+        {result && <ResultView analysis={result} chain={chain} token={token} />}
 
         <section className="pricing">
           <div className="section-title" style={{ textAlign: "center" }}>
