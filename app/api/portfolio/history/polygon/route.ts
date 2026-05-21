@@ -6,9 +6,9 @@ import { FACILITATOR, PAY_TO_ADDRESS } from "@/lib/x402";
 
 export const runtime = "nodejs";
 
-// JPYC v2 on Polygon. Set NEXT_PUBLIC_JPYC_CONTRACT to the full 0x address.
+// JPYC v2 contract on Polygon. Override with NEXT_PUBLIC_JPYC_CONTRACT.
 const JPYC_POLYGON = (process.env.NEXT_PUBLIC_JPYC_CONTRACT ??
-  "0x431D5dfF03120AFA4bDf332c61A6e1766eF37BF") as `0x${string}`;
+  "0x431D5dfF03120AFA4bDf332c61A6e1766eF37BDB") as `0x${string}`;
 
 async function handler(req: NextRequest): Promise<NextResponse> {
   return handleHistory(await readJsonBody(req));
