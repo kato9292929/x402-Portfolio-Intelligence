@@ -38,8 +38,8 @@ returned.
 | Layer    | Technology |
 |----------|------------|
 | Framework | Next.js 15 (App Router) + React 19 |
-| Payments  | x402-next (`withX402`), x402 client (`exact` EVM scheme) |
-| Wallet    | wagmi + RainbowKit + viem |
+| Payments  | x402-next (`withX402`) + manual 402; client signs EVM (EIP-3009) & Solana payments |
+| Wallet    | wagmi + RainbowKit (EVM), Solana wallet-adapter — Phantom / Solflare |
 | AI        | `@anthropic-ai/sdk` (Claude) |
 | Data      | Helius (Solana), Alchemy (Base / Polygon), Nansen smart money |
 
@@ -109,10 +109,14 @@ npm run dev     # http://localhost:3000
 
 ### Usage
 
-1. Connect a wallet (top-right) — needs USDC on Base to pay.
-2. Enter a wallet address, pick a chain and risk tolerance.
+1. Connect a wallet (top-right): an EVM wallet via RainbowKit and/or a Solana
+   wallet (Phantom / Solflare). The chosen payment network needs a small
+   balance of its token.
+2. Enter a wallet address to analyze, then choose the payment network
+   (Solana / Base / Polygon / BNB Chain), the token, and a risk tolerance.
 3. Press **分析する** — approve the x402 payment in your wallet.
 4. Review the pie chart, risk meter, smart money gauge, and recommendations.
+   History and simulation can be run from the result view.
 
 ### Disclaimer
 
@@ -153,8 +157,8 @@ x402 Portfolio Intelligence は、任意のウォレットのDeFiポートフォ
 | レイヤー | 技術 |
 |----------|------|
 | フレームワーク | Next.js 15（App Router）+ React 19 |
-| 決済 | x402-next（`withX402`）、x402 client（`exact` EVMスキーム） |
-| ウォレット | wagmi + RainbowKit + viem |
+| 決済 | x402-next（`withX402`）+ 手動402、クライアントが EVM（EIP-3009）と Solana の決済に署名 |
+| ウォレット | wagmi + RainbowKit（EVM）、Solana wallet-adapter（Phantom / Solflare） |
 | AI | `@anthropic-ai/sdk`（Claude） |
 | データ | Helius（Solana）、Alchemy（Base / Polygon）、Nansenスマートマネー |
 
@@ -224,10 +228,14 @@ npm run dev     # http://localhost:3000
 
 ### 使い方
 
-1. 右上からウォレットを接続します（決済にはBase上のUSDCが必要です）。
-2. ウォレットアドレスを入力し、チェーンとリスク許容度を選択します。
+1. 右上からウォレットを接続します。EVM ウォレット（RainbowKit）と Solana
+   ウォレット（Phantom / Solflare）に対応しています。選択した決済ネットワークの
+   トークン残高が必要です。
+2. 分析対象のウォレットアドレスを入力し、決済ネットワーク（Solana / Base /
+   Polygon / BNB Chain）・トークン・リスク許容度を選択します。
 3. **分析する** を押し、ウォレットでx402決済を承認します。
 4. 円グラフ・リスクメーター・スマートマネースコア・推奨アクションを確認します。
+   結果画面から履歴分析・シミュレーションも実行できます。
 
 ### 免責事項
 
