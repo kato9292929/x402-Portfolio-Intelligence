@@ -1,27 +1,30 @@
 import type { WalletClient } from "viem";
 
 /**
- * Browser-side x402 payment client (multi-chain).
+ * Browser-side x402 v2 payment client (Base EVM + Solana).
  *
  * On a 402 response it inspects the payment requirement's network and:
- *   - EVM (Base / Polygon / BNB Chain) → signs an EIP-3009
- *     `transferWithAuthorization` (EIP-712) with the connected EVM wallet.
- *   - Solana → signs the payment authorization with the connected Solana
- *     wallet (signMessage).
- * The signed payload is encoded into the `X-PAYMENT` header and the request
- * is retried.
+ *   - EVM (eip155:NNNN) → signs an EIP-3009 `transferWithAuthorization`
+ *     (EIP-712) with the connected EVM wallet.
+ *   - Solana (solana:...) → signs the payment authorization with the
+ *     connected Solana wallet via signMessage.
+ *
+ * The signed payload is encoded into the `X-PAYMENT` header and the
+ * request is retried.
  */
 
 interface PaymentRequirements {
   scheme: string;
   network: string;
-  maxAmountRequired: string;
+  /** v2 servers send `amount`; older / cross-version servers may send `maxAmountRequired`. */
+  amount?: string;
+  maxAmountRequired?: string;
   resource: string;
   description?: string;
   payTo: string;
   maxTimeoutSeconds?: number;
   asset: string;
-  extra?: { name?: string; version?: string };
+  extra?: { name?: string; version?: string; feePayer?: string };
 }
 
 /** Minimal shape of a connected Solana wallet (matches wallet-adapter's useWallet). */
@@ -35,15 +38,6 @@ export interface WalletBundle {
   solana?: SolanaWalletLike | null;
 }
 
-const EVM_CHAIN_IDS: Record<string, number> = {
-  base: 8453,
-  "base-sepolia": 84532,
-  polygon: 137,
-  "polygon-amoy": 80002,
-  bsc: 56,
-  bnb: 56,
-};
-
 export class PaymentError extends Error {}
 
 function isSolanaNetwork(network: string): boolean {
@@ -51,9 +45,21 @@ function isSolanaNetwork(network: string): boolean {
 }
 
 function evmChainId(network: string): number | null {
-  if (EVM_CHAIN_IDS[network] != null) return EVM_CHAIN_IDS[network];
   const caip = /^eip155:(\d+)$/.exec(network);
-  return caip ? Number(caip[1]) : null;
+  if (caip) return Number(caip[1]);
+  const legacy: Record<string, number> = {
+    base: 8453,
+    "base-sepolia": 84532,
+    polygon: 137,
+    "polygon-amoy": 80002,
+    bsc: 56,
+    bnb: 56,
+  };
+  return legacy[network] ?? null;
+}
+
+function amountOf(req: PaymentRequirements): string {
+  return req.amount ?? req.maxAmountRequired ?? "0";
 }
 
 function randomNonce(): `0x${string}` {
@@ -81,23 +87,28 @@ async function buildEvmPaymentHeader(
   if (!chainId) {
     throw new PaymentError(`未対応の決済ネットワークです: ${req.network}`);
   }
+  if (!req.extra?.name || !req.extra?.version) {
+    throw new PaymentError(
+      `EIP-712 domain情報 (name, version) が支払い要件に含まれていません`,
+    );
+  }
 
   const account = wallet.account;
   const now = Math.floor(Date.now() / 1000);
   const authorization = {
     from: account.address,
     to: req.payTo as `0x${string}`,
-    value: req.maxAmountRequired,
-    validAfter: "0",
-    validBefore: String(now + (req.maxTimeoutSeconds ?? 300) + 60),
+    value: amountOf(req),
+    validAfter: String(now - 600),
+    validBefore: String(now + (req.maxTimeoutSeconds ?? 300)),
     nonce: randomNonce(),
   };
 
   const signature = await wallet.signTypedData({
     account,
     domain: {
-      name: req.extra?.name ?? "USD Coin",
-      version: req.extra?.version ?? "2",
+      name: req.extra.name,
+      version: req.extra.version,
       chainId,
       verifyingContract: req.asset as `0x${string}`,
     },
@@ -124,7 +135,7 @@ async function buildEvmPaymentHeader(
 
   return btoa(
     JSON.stringify({
-      x402Version: 1,
+      x402Version: 2,
       scheme: req.scheme,
       network: req.network,
       payload: { signature, authorization },
@@ -149,7 +160,7 @@ async function buildSolanaPaymentHeader(
   const authorization = {
     from: wallet.publicKey.toBase58(),
     to: req.payTo,
-    value: req.maxAmountRequired,
+    value: amountOf(req),
     asset: req.asset,
     network: req.network,
     resource: req.resource,
@@ -163,7 +174,7 @@ async function buildSolanaPaymentHeader(
 
   return btoa(
     JSON.stringify({
-      x402Version: 1,
+      x402Version: 2,
       scheme: req.scheme,
       network: req.network,
       payload: { signature: bytesToBase64(signed), authorization },
@@ -174,11 +185,25 @@ async function buildSolanaPaymentHeader(
 /* --------------------------------- fetch -------------------------------- */
 
 export interface X402FetchOptions {
+  /** Preferred payment network if the server advertises multiple legs. */
+  preferredNetwork?: string;
   onPayment?: (requirements: PaymentRequirements) => void;
 }
 
+function selectRequirement(
+  accepts: PaymentRequirements[],
+  preferred?: string,
+): PaymentRequirements | undefined {
+  const exact = accepts.filter((a) => a.scheme === "exact");
+  if (preferred) {
+    const match = exact.find((a) => a.network === preferred);
+    if (match) return match;
+  }
+  return exact[0] ?? accepts[0];
+}
+
 /**
- * fetch wrapper that transparently settles an x402 paywall on any supported chain.
+ * fetch wrapper that transparently settles an x402 v2 paywall.
  */
 export async function x402Fetch(
   url: string,
@@ -192,7 +217,8 @@ export async function x402Fetch(
   const challenge = (await first.json().catch(() => null)) as
     | { accepts?: PaymentRequirements[] }
     | null;
-  const requirements = (challenge?.accepts ?? []).find((a) => a.scheme === "exact");
+  const accepts = challenge?.accepts ?? [];
+  const requirements = selectRequirement(accepts, options.preferredNetwork);
   if (!requirements) {
     throw new PaymentError("サーバーから支払い要件を取得できませんでした");
   }
