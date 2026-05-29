@@ -1,7 +1,7 @@
 # x402 Portfolio Intelligence
 
-> AI-powered DeFi portfolio analysis gated by the x402 payment protocol.
-> x402決済プロトコルでゲートされた、AIによるDeFiポートフォリオ分析。
+> AI-powered DeFi portfolio analysis behind the **x402 v2** payment protocol.
+> **x402 v2** 決済プロトコルでゲートされた、AIによるDeFiポートフォリオ分析。
 
 ---
 
@@ -11,26 +11,26 @@
 
 x402 Portfolio Intelligence analyzes any wallet's DeFi portfolio and returns
 AI-powered rebalancing recommendations based on smart money signals. Pass a
-wallet address and the app scores its risk, liquidity, and smart money
-divergence, then Claude generates a "what to do next" recommendation.
+wallet address, the app scores its risk, liquidity, and smart money
+divergence, and Claude produces a "what to do next" recommendation.
 
-Every analysis endpoint is metered with the [x402](https://x402.org) payment
-protocol — the client pays a small amount before results are returned.
-Payment can be made on Base / Polygon (USDC / JPYC), Solana (USDC), or
-BNB Chain (USDT).
+The single paid endpoint is gated by the [x402](https://x402.org) v2 protocol.
+Callers can settle in **Base USDC** (EIP-3009 transferWithAuthorization) or
+**Solana USDC** — both legs are advertised in the same 402 challenge.
 
 ### Features
 
 - **Portfolio analysis** — holdings, allocation, per-token risk / smart money /
   divergence scores, overall risk meter, and Claude-generated recommendations.
-- **History analysis** — 90 days of portfolio value movement and its
-  correlation with smart money activity.
-- **Rebalance simulation** — projected risk / return / smart money alignment
-  after applying the recommended changes.
-- **x402 payments** — each route is protected by `withX402`; the browser signs
-  an EIP-3009 `transferWithAuthorization` to settle.
-- **Multi-chain payments** — pay on Base or Polygon (USDC / JPYC) via
-  `withX402`, or on Solana (USDC) and BNB Chain (USDT) via a manual 402 flow.
+- **x402 v2 payment** — `withX402` from `@x402/next`; the browser signs an
+  EIP-3009 authorization for Base, or a Solana payment authorization, and
+  retries with the encoded `X-PAYMENT` header.
+- **Multi-leg single endpoint** — one `accepts` array carries the Base and
+  Solana legs; the client picks the leg matching the connected wallet.
+- **Discovery** — `GET /.well-known/x402.json` lists every paid endpoint and
+  its accepted payment legs for agent clients.
+- **CDP facilitator** — when `CDP_API_KEY_ID` + `CDP_API_KEY_SECRET` are set,
+  authenticates against the Coinbase Developer Platform x402 v2 facilitator.
 - **Graceful fallbacks** — when provider keys are absent, deterministic
   simulated data keeps the product fully demoable.
 
@@ -39,38 +39,29 @@ BNB Chain (USDT).
 | Layer    | Technology |
 |----------|------------|
 | Framework | Next.js 15 (App Router) + React 19 |
-| Payments  | x402-next (`withX402`) + manual 402; client signs EVM (EIP-3009) & Solana payments |
-| Wallet    | wagmi + RainbowKit (EVM), Solana wallet-adapter — Phantom / Solflare |
+| Payments  | `@x402/next` 2.13 (`withX402`), `@x402/core`, `@x402/evm`, `@x402/svm`, `@coinbase/x402` |
+| Wallet    | wagmi + RainbowKit (EVM Base), Solana wallet-adapter — Phantom / Solflare |
 | AI        | `@anthropic-ai/sdk` (Claude) |
 | Data      | Helius (Solana), Alchemy (Base / Polygon), Nansen smart money |
 
-### API routes
+### API surface
 
-| Route | Price | Body |
-|-------|-------|------|
-| `POST /api/portfolio/analyze` | $0.50 | `{ walletAddress, chain, riskTolerance }` |
-| `POST /api/portfolio/history` | $0.30 | `{ walletAddress }` |
-| `POST /api/portfolio/simulate` | $0.50 | `{ currentPortfolio, proposedChanges }` |
+| Route | Method | Price | Body |
+|-------|--------|-------|------|
+| `/api/portfolio/analyze` | POST | $0.30 (Base USDC or Solana USDC) | `{ walletAddress, chain, riskTolerance }` |
+| `/.well-known/x402.json` | GET | free | discovery document |
 
-`chain` (the analyzed wallet's chain) is `"solana" | "base" | "polygon"`;
-`riskTolerance` is `"LOW" | "MEDIUM" | "HIGH"`.
+`chain` (the analyzed wallet's chain) is `"solana" \| "base" \| "polygon"`;
+`riskTolerance` is `"LOW" \| "MEDIUM" \| "HIGH"`. The two payment legs map to
+CAIP-2 networks:
 
-### Multi-chain payments
+- Base USDC → `eip155:8453`
+- Solana USDC → `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`
 
-The base routes above settle in **USDC on Base** via `withX402`. Each route
-also has chain-specific sub-routes so the caller can pay on another network:
-
-| Sub-route | Payment chain | Token | x402 |
-|-----------|---------------|-------|------|
-| `…/analyze` (base) | Base | USDC | withX402 |
-| `…/analyze/polygon` | Polygon | USDC · JPYC | withX402 |
-| `…/analyze/solana` | Solana | USDC | manual 402 |
-| `…/analyze/bnb` | BNB Chain | USDT | manual 402 |
-
-The same `/polygon`, `/solana`, `/bnb` sub-routes exist for `history` and
-`simulate`. On the Polygon sub-routes, add `?token=jpyc` to pay in JPYC
-instead of USDC. Solana and BNB Chain use a hand-built 402 challenge because
-x402-next 1.2.0's `withX402` supports neither network.
+**All body fields are optional.** When `walletAddress` is omitted the route
+analyses a public sample wallet (override via `DEFAULT_SAMPLE_WALLET`) and
+returns `mode: "sample"` in the response. Upstream failures return HTTP 502
+with `{ error, detail }`.
 
 The analysis pipeline runs in four steps:
 
@@ -86,19 +77,26 @@ Copy `.env.example` to `.env.local` and fill in:
 ```
 NANSEN_API_KEY=
 ANTHROPIC_API_KEY=
-WALLET_ADDRESS=                  # EVM payout (Base / Polygon / BNB)
-SOLANA_WALLET_ADDRESS=           # Solana payout (base58)
-FACILITATOR_URL=https://api.developer.coinbase.com/rpc/v1/base/facilitator
+
+# x402 v2 facilitator
+CDP_API_KEY_ID=
+CDP_API_KEY_SECRET=
+FACILITATOR_URL=https://api.cdp.coinbase.com/platform/v2/x402
+
+# Payout wallets
+WALLET_ADDRESS_BASE=0xC67d94504696960bA0f2e7C3FeE703950734c00A
+WALLET_ADDRESS_SOLANA=4s8XQC2WzRfgH8Xiep7ybnCW11VKRCMwxQF6jknx3VPf
+# Backward-compat fallback for WALLET_ADDRESS_BASE
+WALLET_ADDRESS=
+
 NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=placeholder
 HELIUS_RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_KEY
 NEXT_PUBLIC_HELIUS_RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_KEY
-NEXT_PUBLIC_JPYC_CONTRACT=0x431D5dfF03120AFA4bDf332c61A6e1766eF37BDB
-NEXT_PUBLIC_USDT_BNB_CONTRACT=0x55d398326f99059fF775485246999027B3197955
 ```
 
-`WALLET_ADDRESS` receives EVM x402 payments; `SOLANA_WALLET_ADDRESS` receives
-Solana payments. `ALCHEMY_API_KEY` and `ANTHROPIC_MODEL` are optional. Any
-missing key falls back to simulated data.
+Facilitator selection order: `CDP_API_KEY_ID` + `CDP_API_KEY_SECRET` (CDP
+production) → `FACILITATOR_URL` → `@x402/core` default. `ALCHEMY_API_KEY` and
+`ANTHROPIC_MODEL` are optional; missing keys fall back to simulated data.
 
 ### Getting started
 
@@ -110,14 +108,13 @@ npm run dev     # http://localhost:3000
 
 ### Usage
 
-1. Connect a wallet (top-right): an EVM wallet via RainbowKit and/or a Solana
-   wallet (Phantom / Solflare). The chosen payment network needs a small
-   balance of its token.
-2. Enter a wallet address to analyze, then choose the payment network
-   (Solana / Base / Polygon / BNB Chain), the token, and a risk tolerance.
-3. Press **分析する** — approve the x402 payment in your wallet.
+1. Connect a wallet (top-right): an EVM wallet via RainbowKit (Base) and/or a
+   Solana wallet (Phantom / Solflare). The chosen payment network needs a
+   small USDC balance.
+2. Enter a wallet address to analyze, pick the payment network (Base or
+   Solana) and risk tolerance.
+3. Press **分析する** — approve the x402 v2 payment in your wallet.
 4. Review the pie chart, risk meter, smart money gauge, and recommendations.
-   History and simulation can be run from the result view.
 
 ### Disclaimer
 
@@ -135,22 +132,23 @@ x402 Portfolio Intelligence は、任意のウォレットのDeFiポートフォ
 アドレスを渡すと、リスク・流動性・スマートマネー乖離をスコアリングし、Claudeが
 「今のポートフォリオをどう動かすべきか」を提案します。
 
-すべての分析エンドポイントは [x402](https://x402.org) 決済プロトコルで従量課金
-されており、結果を返す前に少額の決済を行います。決済は Base・Polygon
-（USDC / JPYC）、Solana（USDC）、BNB Chain（USDT）から選択できます。
+有料エンドポイントは [x402](https://x402.org) **v2** プロトコルで保護されて
+います。**Base USDC**（EIP-3009 transferWithAuthorization）または
+**Solana USDC** のどちらでも決済可能で、両方とも同じ 402 チャレンジ内の
+`accepts` 配列に含まれます。
 
 ### 主な機能
 
 - **ポートフォリオ分析** — 保有比率、トークン別のリスク／スマートマネー／乖離
   スコア、総合リスクメーター、Claudeによるリバランス提案。
-- **履歴分析** — 90日間のポートフォリオ価値変動と、スマートマネー活動との
-  相関分析。
-- **リバランスシミュレーション** — 推奨変更を適用した後のリスク・リターン・
-  スマートマネー整合の予測。
-- **x402決済** — 各ルートは `withX402` で保護され、ブラウザが EIP-3009 の
-  `transferWithAuthorization` に署名して決済します。
-- **マルチチェーン決済** — Base・Polygon（USDC / JPYC）は `withX402`、Solana
-  （USDC）と BNB Chain（USDT）は手動 402 フローで決済できます。
+- **x402 v2 決済** — `@x402/next` の `withX402`。ブラウザが Base 用 EIP-3009
+  または Solana の決済認可に署名し、`X-PAYMENT` ヘッダで再送します。
+- **マルチレッグ単一エンドポイント** — 1つの `accepts` 配列で Base と Solana
+  の2レッグを提示し、接続されたウォレットに応じてクライアントが選択します。
+- **Discovery** — `GET /.well-known/x402.json` がエージェント向けに全有料
+  エンドポイントと対応決済レッグを公開します。
+- **CDP facilitator** — `CDP_API_KEY_ID` + `CDP_API_KEY_SECRET` を設定すると
+  Coinbase Developer Platform の x402 v2 facilitator で認証します。
 - **フォールバック** — プロバイダーのAPIキーが無い場合は決定論的な
   シミュレーションデータを使い、常にデモ可能な状態を保ちます。
 
@@ -159,38 +157,29 @@ x402 Portfolio Intelligence は、任意のウォレットのDeFiポートフォ
 | レイヤー | 技術 |
 |----------|------|
 | フレームワーク | Next.js 15（App Router）+ React 19 |
-| 決済 | x402-next（`withX402`）+ 手動402、クライアントが EVM（EIP-3009）と Solana の決済に署名 |
-| ウォレット | wagmi + RainbowKit（EVM）、Solana wallet-adapter（Phantom / Solflare） |
+| 決済 | `@x402/next` 2.13（`withX402`）, `@x402/core`, `@x402/evm`, `@x402/svm`, `@coinbase/x402` |
+| ウォレット | wagmi + RainbowKit（EVM Base）、Solana wallet-adapter（Phantom / Solflare） |
 | AI | `@anthropic-ai/sdk`（Claude） |
 | データ | Helius（Solana）、Alchemy（Base / Polygon）、Nansenスマートマネー |
 
-### APIルート
+### APIサーフェス
 
-| ルート | 価格 | ボディ |
-|--------|------|--------|
-| `POST /api/portfolio/analyze` | $0.50 | `{ walletAddress, chain, riskTolerance }` |
-| `POST /api/portfolio/history` | $0.30 | `{ walletAddress }` |
-| `POST /api/portfolio/simulate` | $0.50 | `{ currentPortfolio, proposedChanges }` |
+| ルート | メソッド | 価格 | ボディ |
+|--------|---------|------|--------|
+| `/api/portfolio/analyze` | POST | $0.30（Base USDC または Solana USDC） | `{ walletAddress, chain, riskTolerance }` |
+| `/.well-known/x402.json` | GET | 無料 | discovery ドキュメント |
 
-`chain`（分析対象ウォレットのチェーン）は `"solana" | "base" | "polygon"`、
-`riskTolerance` は `"LOW" | "MEDIUM" | "HIGH"` です。
+`chain`（分析対象ウォレットのチェーン）は `"solana" \| "base" \| "polygon"`、
+`riskTolerance` は `"LOW" \| "MEDIUM" \| "HIGH"` です。2つの決済レッグは
+CAIP-2 ネットワーク識別子で表現されます:
 
-### マルチチェーン決済
+- Base USDC → `eip155:8453`
+- Solana USDC → `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`
 
-上記のベースルートは `withX402` で **Base上のUSDC** で決済します。各ルートには
-チェーン別のサブルートがあり、別ネットワークで支払えます。
-
-| サブルート | 決済チェーン | トークン | x402 |
-|-----------|------------|---------|------|
-| `…/analyze`（base） | Base | USDC | withX402 |
-| `…/analyze/polygon` | Polygon | USDC・JPYC | withX402 |
-| `…/analyze/solana` | Solana | USDC | manual 402 |
-| `…/analyze/bnb` | BNB Chain | USDT | manual 402 |
-
-`history`・`simulate` にも同じ `/polygon`・`/solana`・`/bnb` サブルートが
-あります。Polygon サブルートでは `?token=jpyc` を付けると JPYC で支払えます。
-Solana と BNB Chain は x402-next 1.2.0 の `withX402` が両ネットワークに
-非対応のため、手動で 402 チャレンジを返します。
+**ボディの全フィールドは任意です。** `walletAddress` を省略した場合は公開
+サンプルウォレットを分析し（`DEFAULT_SAMPLE_WALLET` で上書き可能）、
+レスポンスに `mode: "sample"` を含めます。上流APIの失敗時は HTTP 502 で
+`{ error, detail }` を返します。
 
 分析パイプラインは4ステップで実行されます。
 
@@ -206,19 +195,27 @@ Solana と BNB Chain は x402-next 1.2.0 の `withX402` が両ネットワーク
 ```
 NANSEN_API_KEY=
 ANTHROPIC_API_KEY=
-WALLET_ADDRESS=                  # EVM決済の受取先（Base / Polygon / BNB）
-SOLANA_WALLET_ADDRESS=           # Solana決済の受取先（base58）
-FACILITATOR_URL=https://api.developer.coinbase.com/rpc/v1/base/facilitator
+
+# x402 v2 facilitator
+CDP_API_KEY_ID=
+CDP_API_KEY_SECRET=
+FACILITATOR_URL=https://api.cdp.coinbase.com/platform/v2/x402
+
+# 受取ウォレット
+WALLET_ADDRESS_BASE=0xC67d94504696960bA0f2e7C3FeE703950734c00A
+WALLET_ADDRESS_SOLANA=4s8XQC2WzRfgH8Xiep7ybnCW11VKRCMwxQF6jknx3VPf
+# WALLET_ADDRESS_BASE 未設定時の後方互換フォールバック
+WALLET_ADDRESS=
+
 NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=placeholder
 HELIUS_RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_KEY
 NEXT_PUBLIC_HELIUS_RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_KEY
-NEXT_PUBLIC_JPYC_CONTRACT=0x431D5dfF03120AFA4bDf332c61A6e1766eF37BDB
-NEXT_PUBLIC_USDT_BNB_CONTRACT=0x55d398326f99059fF775485246999027B3197955
 ```
 
-`WALLET_ADDRESS` がEVMのx402決済受取先、`SOLANA_WALLET_ADDRESS` がSolanaの
-受取先です。`ALCHEMY_API_KEY` と `ANTHROPIC_MODEL` は任意です。未設定のキーは
-シミュレーションデータにフォールバックします。
+facilitator は次の優先順で選択されます: `CDP_API_KEY_ID` + `CDP_API_KEY_SECRET`
+（CDP本番）→ `FACILITATOR_URL` → `@x402/core` の既定値。`ALCHEMY_API_KEY` と
+`ANTHROPIC_MODEL` は任意です。未設定のキーはシミュレーションデータに
+フォールバックします。
 
 ### セットアップ
 
@@ -230,14 +227,13 @@ npm run dev     # http://localhost:3000
 
 ### 使い方
 
-1. 右上からウォレットを接続します。EVM ウォレット（RainbowKit）と Solana
+1. 右上からウォレットを接続します。EVM ウォレット（RainbowKit, Base）と Solana
    ウォレット（Phantom / Solflare）に対応しています。選択した決済ネットワークの
-   トークン残高が必要です。
-2. 分析対象のウォレットアドレスを入力し、決済ネットワーク（Solana / Base /
-   Polygon / BNB Chain）・トークン・リスク許容度を選択します。
-3. **分析する** を押し、ウォレットでx402決済を承認します。
+   USDC残高が必要です。
+2. 分析対象のウォレットアドレスを入力し、決済ネットワーク（Base または Solana）
+   とリスク許容度を選択します。
+3. **分析する** を押し、ウォレットで x402 v2 決済を承認します。
 4. 円グラフ・リスクメーター・スマートマネースコア・推奨アクションを確認します。
-   結果画面から履歴分析・シミュレーションも実行できます。
 
 ### 免責事項
 

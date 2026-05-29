@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
 import { useState, type ReactNode } from "react";
 import { WagmiProvider } from "wagmi";
-import { base, bsc, mainnet, polygon } from "wagmi/chains";
+import { base, mainnet } from "wagmi/chains";
 
 // Solana wallet context is browser-only (wallet adapters touch window/indexedDB).
 const SolanaWalletProviders = dynamic(
@@ -17,7 +17,7 @@ const SolanaWalletProviders = dynamic(
 const wagmiConfig = getDefaultConfig({
   appName: "x402 Portfolio Intelligence",
   projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "placeholder",
-  chains: [base, polygon, bsc, mainnet],
+  chains: [base, mainnet],
   ssr: true,
 });
 

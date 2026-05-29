@@ -6,15 +6,11 @@ import { useAccount, useWalletClient } from "wagmi";
 import { Header } from "@/components/Header";
 import { ResultView } from "@/components/ResultView";
 import {
-  CHAIN_BANNER,
-  CHAIN_TOKENS,
+  NETWORK_FOR,
   PAYMENT_CHAINS,
   analyzedChainFor,
-  defaultToken,
   isSolanaChain,
-  paymentEndpoint,
   type PaymentChain,
-  type PaymentToken,
 } from "@/lib/payments";
 import type { PortfolioAnalysis, RiskTolerance } from "@/lib/types";
 import { PaymentError, x402Fetch } from "@/lib/x402Client";
@@ -22,9 +18,11 @@ import { PaymentError, x402Fetch } from "@/lib/x402Client";
 const RISK_LEVELS: RiskTolerance[] = ["LOW", "MEDIUM", "HIGH"];
 
 const PRICING = [
-  { name: "ポートフォリオ分析", price: "$0.50", desc: "保有比率・リスク・スマートマネー整合をAIが総合分析" },
-  { name: "履歴分析", price: "$0.30", desc: "90日間の価値変動とスマートマネーとの相関を可視化" },
-  { name: "リバランスシミュレーション", price: "$0.50", desc: "提案適用後のリスク・リターンを予測" },
+  {
+    name: "ポートフォリオ分析",
+    price: "$0.30",
+    desc: "保有比率・リスク・スマートマネー整合をClaudeが分析（Base USDC または Solana USDC）",
+  },
 ];
 
 export default function Home() {
@@ -35,7 +33,6 @@ export default function Home() {
   const [walletAddress, setWalletAddress] = useState("");
   const [touched, setTouched] = useState(false);
   const [chain, setChain] = useState<PaymentChain>("solana");
-  const [token, setToken] = useState<PaymentToken>("USDC");
   const [riskTolerance, setRiskTolerance] = useState<RiskTolerance>("MEDIUM");
 
   const [loading, setLoading] = useState(false);
@@ -47,15 +44,10 @@ export default function Home() {
     if (touched) return;
     if (chain === "solana" && solana.publicKey) {
       setWalletAddress(solana.publicKey.toBase58());
-    } else if (chain !== "solana" && address) {
+    } else if (chain === "base" && address) {
       setWalletAddress(address);
     }
   }, [address, solana.publicKey, chain, touched]);
-
-  function selectChain(next: PaymentChain) {
-    setChain(next);
-    setToken(defaultToken(next));
-  }
 
   async function analyze() {
     if (!walletAddress.trim()) {
@@ -69,7 +61,7 @@ export default function Home() {
 
     try {
       const res = await x402Fetch(
-        paymentEndpoint("analyze", chain, token),
+        "/api/portfolio/analyze",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -80,7 +72,10 @@ export default function Home() {
           }),
         },
         { evm: walletClient, solana },
-        { onPayment: () => setStage("ポートフォリオをAIが分析中…") },
+        {
+          preferredNetwork: NETWORK_FOR[chain],
+          onPayment: () => setStage("ポートフォリオをAIが分析中…"),
+        },
       );
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? "分析に失敗しました");
@@ -94,7 +89,6 @@ export default function Home() {
     }
   }
 
-  const banner = CHAIN_BANNER[chain];
   const walletReady = isSolanaChain(chain) ? solana.connected : isConnected;
 
   return (
@@ -103,13 +97,13 @@ export default function Home() {
 
       <section className="hero">
         <div className="container">
-          <span className="eyebrow">x402 · DeFi INTELLIGENCE</span>
+          <span className="eyebrow">x402 v2 · DeFi INTELLIGENCE</span>
           <h1>
             PORTFOLIO <span className="accent">INTELLIGENCE</span>
           </h1>
           <p>
             ウォレットのポートフォリオをスマートマネーシグナルと照合してAIが分析する。
-            リスク・流動性・乖離スコアからClaudeが次の一手を提案します。
+            x402 v2でBase USDC / Solana USDC のどちらでも支払えます。
           </p>
         </div>
       </section>
@@ -134,39 +128,19 @@ export default function Home() {
           </div>
 
           <div className="field">
-            <label>決済ネットワーク</label>
+            <label>決済ネットワーク（USDC）</label>
             <div className="choice-row">
               {PAYMENT_CHAINS.map((c) => (
                 <button
                   key={c.id}
                   type="button"
                   className={`choice ${chain === c.id ? "active" : ""}`}
-                  onClick={() => selectChain(c.id)}
+                  onClick={() => setChain(c.id)}
                 >
                   {c.label}
                 </button>
               ))}
             </div>
-          </div>
-
-          <div className="field">
-            <label>決済トークン</label>
-            <div className="token-tabs">
-              {CHAIN_TOKENS[chain].map((opt) => (
-                <button
-                  key={opt.token}
-                  type="button"
-                  disabled={!opt.enabled}
-                  className={`token-tab ${token === opt.token && opt.enabled ? "active" : ""} ${
-                    opt.enabled ? "" : "disabled"
-                  }`}
-                  onClick={() => opt.enabled && setToken(opt.token)}
-                >
-                  {opt.token}
-                </button>
-              ))}
-            </div>
-            {banner && <div className="banner">{banner}</div>}
           </div>
 
           <div className="field">
@@ -186,7 +160,7 @@ export default function Home() {
           </div>
 
           <button className="btn-primary" onClick={analyze} disabled={loading}>
-            {loading ? "処理中…" : `分析する（${token}決済）`}
+            {loading ? "処理中…" : `分析する（$0.30 / ${chain === "solana" ? "Solana" : "Base"} USDC）`}
           </button>
 
           <p className="form-note">
@@ -207,7 +181,7 @@ export default function Home() {
           </div>
         )}
 
-        {result && <ResultView analysis={result} chain={chain} token={token} />}
+        {result && <ResultView analysis={result} />}
 
         <section className="pricing">
           <div className="section-title" style={{ textAlign: "center" }}>
@@ -231,7 +205,7 @@ export default function Home() {
       </main>
 
       <footer className="site-footer">
-        x402 Portfolio Intelligence · Powered by x402 · Nansen · Claude
+        x402 Portfolio Intelligence · Powered by x402 v2 · Nansen · Claude
       </footer>
     </>
   );
