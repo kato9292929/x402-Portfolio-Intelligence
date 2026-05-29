@@ -58,6 +58,11 @@ CAIP-2 networks:
 - Base USDC → `eip155:8453`
 - Solana USDC → `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`
 
+**All body fields are optional.** When `walletAddress` is omitted the route
+analyses a public sample wallet (override via `DEFAULT_SAMPLE_WALLET`) and
+returns `mode: "sample"` in the response. Upstream failures return HTTP 502
+with `{ error, detail }`.
+
 The analysis pipeline runs in four steps:
 
 1. Fetch wallet holdings via Helius / Alchemy.
@@ -170,6 +175,11 @@ CAIP-2 ネットワーク識別子で表現されます:
 
 - Base USDC → `eip155:8453`
 - Solana USDC → `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`
+
+**ボディの全フィールドは任意です。** `walletAddress` を省略した場合は公開
+サンプルウォレットを分析し（`DEFAULT_SAMPLE_WALLET` で上書き可能）、
+レスポンスに `mode: "sample"` を含めます。上流APIの失敗時は HTTP 502 で
+`{ error, detail }` を返します。
 
 分析パイプラインは4ステップで実行されます。
 
